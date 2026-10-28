@@ -25,6 +25,7 @@
 #include "kern_xelp_combo_policy.hpp"
 struct TGLComboSignal {
     uint32_t base {},lanes {},linkRate {},level {},swing {},scalar {},cursor {},post1 {};
+    XELP::ComboPolicy::Table table {XELP::ComboPolicy::Table::Invalid};
     bool low {};
     bool select(uint32_t ddi,uint32_t count,uint32_t rate,bool lowSwing,bool hobl,
                 uint32_t voltage,uint32_t emphasis,
@@ -57,7 +58,7 @@ struct TGLComboSignal {
         base=route.phyBase();lanes=count;linkRate=rate;low=panel && lowSwing;assign(policy);return true;
     }
     void assign(const XELP::ComboPolicy &p) {
-        level=p.level;swing=p.coefficients.swing;scalar=p.coefficients.scalar;
+        table=p.table;level=p.level;swing=p.coefficients.swing;scalar=p.coefficients.scalar;
         cursor=p.coefficients.cursor;post1=p.coefficients.post1;
     }
 

@@ -196,6 +196,15 @@ it also skips GPU resource probing while preserving the
 framebuffer's independent boot-memory and MMIO checks. It does not enable an
 otherwise unsupported display backend.
 
+For Tiger Lake internal-panel link-training and wake diagnostics,
+`-wex-tgl-edp-native-signal` delegates only the internal eDP signal-level
+programming to the Apple driver. `-wex-tgl-edp-generic-signal` keeps WEX
+programming but selects the generic Tiger Lake coefficient table instead of the
+U/Y table. External DisplayPort, Alder Lake-S and Display 13 outputs are not
+affected. If both arguments are present, the native path takes precedence.
+The iGPU property `WhateverXeEDPSignalPolicy` reports the selected path as
+`0` (automatic), `1` (native), or `2` (generic).
+
 Temporary development diagnostic: `-wex-adlp-readout` captures ADL-P boot resources while keeping GPU driver admission disabled. It is not required for supported hardware.
 `-wex-adlp-load-only` blocks both native framebuffer and accelerator probes/starts on a selected ADL-P/RPL-P device, for load-only diagnostics without GPU initialization.
 `-wex-display13-offline` keeps native display controller initialization enabled on Alder Lake-N / Twin Lake and Alder Lake-H/P/U / Raptor Lake-H/P/U but reports selected outputs as disconnected, isolating HPD/EDID and mode programming for framebuffer diagnostics. It does not establish display operation.

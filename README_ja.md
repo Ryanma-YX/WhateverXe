@@ -145,6 +145,9 @@ FBの立上げ時は、任意の`-wex-noaccel`引数でAcceleratorの起動を�
 Alder Lake-N / Twin LakeとAlder Lake-H/P/U / Raptor Lake-H/P/UではGPU資源のprobeも省略し、FB独自の起動メモリ・MMIOの確認は維持します。
 未対応のDisplayバックエンドを有効にする引数ではありません。
 
+Tiger Lakeの内蔵パネルでLink Trainingや復帰を診断する場合、`-wex-tgl-edp-native-signal`は内蔵eDPの信号レベル設定だけをAppleドライバに委譲します。`-wex-tgl-edp-generic-signal`はWEXによる設定を維持し、U/Y用ではなくTiger Lake汎用の係数テーブルを選択します。外部DisplayPort、Alder Lake-S、Display 13の出力には影響しません。両方を指定した場合はnative経路が優先されます。
+iGPUの`WhateverXeEDPSignalPolicy`プロパティには、選択中の経路が`0`（自動）、`1`（native）、`2`（generic）として表示されます。
+
 開発時の一時診断用に `-wex-adlp-readout` を指定すると、GPUドライバの受付を閉じたままADL-Pの起動資源を採取します。対応済みハードウェアでは不要です。
 `-wex-adlp-load-only` は選択済みADL-P/RPL-Pで、FramebufferとAccelerator両方のnative probe/startを止め、GPUを初期化せずにロード段階を診断します。
 `-wex-display13-offline` はAlder Lake-N / Twin LakeとAlder Lake-H/P/U / Raptor Lake-H/P/Uのnative display controller初期化を有効に保ち、選択した出力を未接続として扱います。FB診断でHPD/EDIDとmode設定を切り離すための設定で、表示成立を意味しません。

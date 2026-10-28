@@ -22,9 +22,11 @@ code=r'''
 struct State {
  uint32_t tglComboDPMask=0;bool adlsDisplaySelected=false;AlderLakeS::Wiring adlsWiring;alignas(8) uint8_t tglPlatformCopy[0x1c0]{};
  void *tglObservationController=nullptr;bool tglActive=true,tglComboSignalReady=true;
+ uint32_t tglEDPSignalPolicy=0;
  struct {uint32_t identity=0x9A498086;XELP::Family family=XELP::Family::TigerLake;} xeProfile;
  XELP::VBT::Ports firmwarePorts;
 } state,*callbackXE=&state;
+constexpr uint32_t TGLEDPSignalNative=1,TGLEDPSignalGeneric=2;
 constexpr uint32_t kIOReturnNotReady=0xe00002d8;
 std::map<unsigned,unsigned> registers;unsigned reads=0,writes=0,records=0;
 uint32_t wrapTGLRegisterRead(void *,unsigned long reg){++reads;return registers[reg];}
@@ -67,7 +69,8 @@ int main(){
   if(bad==19)registers[0x162A9C]=~0U;
   if(bad==22)state.xeProfile.identity=0xFFFF8086;
   uint32_t result=99;
-  bool applied=run(bad==20?nullptr:p,0,0,bad==21?p:nullptr,result);
+  bool native=false;bool applied=run(bad==20?nullptr:p,0,0,bad==21?p:nullptr,result,native);
+  assert(!native);
   assert(applied==(bad==0||bad==19));assert((writes!=0)==(bad==0));
   if(bad==0)assert(result==0&&records==1);
   if(bad==19)assert(result==kIOReturnNotReady);
@@ -77,20 +80,33 @@ int main(){
  // Known physical subplatforms must select electrical policy independently
  // of a render backend. HBR2 U/Y differs at voltage0/emphasis1; HBR3 eDP
  // uses the ICL table regardless of VBT low-swing/HOBL flags.
- for(unsigned id:{0x9A498086u,0x9A788086u,0x9A608086u})for(unsigned rate:{20u,30u})
+ for(unsigned policy:{0U,TGLEDPSignalGeneric})for(unsigned id:{0x9A498086u,0x9A788086u,0x9A608086u})for(unsigned rate:{20u,30u})
  for(bool low:{false,true})for(bool hobl:{false,true}) {
   alignas(8) uint8_t p[0x700]{},ctl[0xD00]{},access[0x100]{};uint32_t config[8]{};
   auto store=[](void *b,unsigned o,auto v){memcpy(static_cast<uint8_t *>(b)+o,&v,sizeof(v));};
-  state={};state.xeProfile.identity=id;state.tglObservationController=ctl;
+  state={};state.xeProfile.identity=id;state.tglEDPSignalPolicy=policy;state.tglObservationController=ctl;
   state.firmwarePorts.status=XELP::VBT::Status::Valid;state.firmwarePorts.panel={true,low,hobl,0,0};
   store(p,0x548,config+0);store(p,0x550,1U);store(p,0x578,access+0);store(ctl,0xC40,access+0);
   store(p,0x124,4U);store(p,0x128,rate);store(p,0x620,0x162804U);store(p,0x5C8,0x162028U);
   store(access,0x60,0x200000U);store(access,0x50,ctl+0);
   registers.clear();registers[0x45404]=3;registers[0x45454]=3;reads=writes=records=0;
-  uint32_t result=99;assert(run(p,0,1,nullptr,result));
+  uint32_t result=99;bool native=false;assert(run(p,0,1,nullptr,result,native));assert(!native);
   assert(result==0);
-  const unsigned post=rate==30?8:low?7:id==0x9A608086?8:9;
+  const unsigned post=rate==30?8:low?7:policy==TGLEDPSignalGeneric?8:id==0x9A608086?8:9;
   assert(((registers[0x162890]>>12)&63)==post);
+ }
+
+ // The native policy is an exact internal-panel handoff. It performs no
+ // MMIO itself and does not require the observation controller.
+ {
+  alignas(8) uint8_t p[0x700]{};uint32_t config[8]{};
+  auto store=[](void *b,unsigned o,auto v){memcpy(static_cast<uint8_t *>(b)+o,&v,sizeof(v));};
+  state={};state.tglEDPSignalPolicy=TGLEDPSignalNative;
+  state.firmwarePorts.status=XELP::VBT::Status::Valid;state.firmwarePorts.panel.valid=true;
+  store(p,0x548,config+0);store(p,0x550,1U);store(p,0x124,4U);store(p,0x128,20U);
+  registers.clear();reads=writes=records=0;uint32_t result=99;bool native=false;
+  assert(!run(p,0,1,nullptr,result,native)&&native&&!reads&&!writes&&!records);
+  config[2]=1;native=false;assert(!run(p,0,1,nullptr,result,native)&&!native);
  }
 
  // External TGL Combo uses DP electrical values even if a different panel
@@ -98,7 +114,7 @@ int main(){
  for(unsigned ddi:{0u,1u})for(unsigned rate:{6u,10u,20u,30u})for(unsigned bad=0;bad<5;++bad) {
   alignas(8) uint8_t p[0x700]{},ctl[0xD00]{},access[0x100]{};
   auto store=[](void *b,unsigned o,auto v){memcpy(static_cast<uint8_t *>(b)+o,&v,sizeof(v));};
-  state={};state.tglComboDPMask=1U<<ddi;state.tglObservationController=ctl;
+  state={};state.tglComboDPMask=1U<<ddi;state.tglEDPSignalPolicy=TGLEDPSignalNative;state.tglObservationController=ctl;
   state.firmwarePorts.status=XELP::VBT::Status::Valid;
   state.firmwarePorts.panel={true,true,true,0,ddi^1};
   const uint32_t c[]={ddi,ddi+1,1,0,0x400,0x201};
@@ -112,7 +128,7 @@ int main(){
   if(bad==2)store(p,0x548,c+0);
   if(bad==3)config[1]^=1;
   if(bad==4)store(p,0x550,3U);
-  uint32_t result=99;assert(run(p,0,1,nullptr,result)==(bad==0));
+  uint32_t result=99;bool native=false;assert(run(p,0,1,nullptr,result,native)==(bad==0));assert(!native);
   assert(bool(writes)==(bad==0));
   if(!bad){assert(result==0);assert(((registers[base+0x890]>>12)&63)==(rate>10?9u:8u));}
  }
@@ -135,7 +151,7 @@ int main(){
   if(bad==6)registers[0x45454]=0;
   if(bad==7)store(p,0x620,base+0x904);
   if(bad>=8)config[bad-8]^=1;
-  uint32_t result=99;assert(run(p,0,0,nullptr,result)==(bad==0));
+  uint32_t result=99;bool native=false;assert(run(p,0,0,nullptr,result,native)==(bad==0));assert(!native);
   assert((writes!=0)==(bad==0));if(!bad)assert(!result && records==1 && registers[base+0x89c]==0x35000000);
  }
  // ADL-S panel uses the same programming sequence with panel electrical
@@ -152,12 +168,12 @@ int main(){
   store(p,0x124,2U);store(p,0x128,rate);store(p,0x620,0x162804U);store(p,0x5C8,0x162028U);
   store(access,0x60,0x200000U);store(access,0x50,ctl+0);
   registers.clear();registers[0x45404]=3;registers[0x45454]=3;reads=writes=records=0;
-  uint32_t result=99;assert(run(p,0,0,nullptr,result)&&!result&&records==1);
+  uint32_t result=99;bool native=false;assert(run(p,0,0,nullptr,result,native)&&!native&&!result&&records==1);
   XELP::ComboPolicy expected;assert(expected.select(XELP::ComboPolicy::Platform::ADLS,rate,true,low,false,0,0));
   assert((registers[0x16289C]>>24&127)==expected.coefficients.scalar);
   assert((registers[0x162890]&0x3ffff)==(expected.coefficients.post1<<12|expected.coefficients.cursor));
   assert(!(registers[0x162028]&12));
-  state.adlsWiring.panel=0;writes=0;assert(!run(p,0,0,nullptr,result)&&!writes);
+  state.adlsWiring.panel=0;writes=0;native=false;assert(!run(p,0,0,nullptr,result,native)&&!native&&!writes);
  }
  puts("PASS production combo guard: family, port, firmware, ownership, power and missing bank");
 }

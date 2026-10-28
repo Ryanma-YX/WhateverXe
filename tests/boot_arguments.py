@@ -71,6 +71,8 @@ struct XE {
  bool tglRequested=false, tglAcceleratorRequested=false;
  bool tglInactivePorts=false, tglPG1Poll=false, tglClockOrderRequested=false;
  bool tglProgramEnabled=false, tglTrainingLeaseRequested=false;
+ static constexpr uint32_t TGLEDPSignalAutomatic=0,TGLEDPSignalNative=1,TGLEDPSignalGeneric=2;
+ uint32_t tglEDPSignalPolicy=TGLEDPSignalAutomatic;
  struct { bool available=false; } modDVMTCalcFix;
  int *currentGraphics=nullptr, *currentFramebuffer=nullptr;
  void init();
@@ -121,7 +123,12 @@ int main() {
   assert(!xe.adlnRequested && !xe.tglRequested && !xe.adlnNativeRequested && !adlnNativeRCSProfileRequested);
  }
  xe=boot({},0x9A498086);
- assert(xe.tglRequested && xe.tglAcceleratorRequested && xe.tglProgramEnabled);
+ assert(xe.tglRequested && xe.tglAcceleratorRequested && xe.tglProgramEnabled && xe.tglEDPSignalPolicy==XE::TGLEDPSignalAutomatic);
+ xe=boot({"-wex-tgl-edp-generic-signal"},0x9A498086);assert(xe.tglEDPSignalPolicy==XE::TGLEDPSignalGeneric);
+ xe=boot({"-wex-tgl-edp-native-signal"},0x9A498086);assert(xe.tglEDPSignalPolicy==XE::TGLEDPSignalNative);
+ xe=boot({"-wex-tgl-edp-generic-signal","-wex-tgl-edp-native-signal"},0x9A498086);
+ assert(xe.tglEDPSignalPolicy==XE::TGLEDPSignalNative);
+ xe=boot({"-wex-tgl-edp-native-signal"},0x46D28086);assert(xe.tglEDPSignalPolicy==XE::TGLEDPSignalAutomatic);
  xe=boot({"-wex-nopanel","-wex-tgl-prog-off"},0x9A408086);
  assert(xe.tglRequested && !xe.tglProgramEnabled);
  xe=boot({"-wex-tgl-off"},0x9A498086);assert(!xe.tglRequested);

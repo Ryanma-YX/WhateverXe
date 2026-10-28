@@ -3796,6 +3796,9 @@ void XE::init() {
 
 void XE::selectProfile(const XELP::Profile &profile) {
     xeProfile=profile;
+    const bool tglDisplay=profile.admitted() && XELP::displayAdapter(profile.family)==XELP::DisplayAdapter::TGL;
+    tglEDPSignalPolicy=tglDisplay && checkKernelArgument("-wex-tgl-edp-native-signal") ? TGLEDPSignalNative :
+        tglDisplay && checkKernelArgument("-wex-tgl-edp-generic-signal") ? TGLEDPSignalGeneric : TGLEDPSignalAutomatic;
     display12SmallGTDetected=profile.admitted() && XELP::display12SmallGT(profile.gt);
     adlsDisplaySelected=profile.admitted() && XELP::displayAdapter(profile.family)==XELP::DisplayAdapter::ADLS;
     adlnNativeRCSProfileRequested=false;
@@ -18819,11 +18822,11 @@ void XE::tglSnapshotTransmitter(void *port, bool done, uint32_t result) {
 	}
 }
 
-bool XE::tglProgramComboSignal(void *port,uint32_t swing,uint32_t emphasis,void *overrideConfig,uint32_t &result) {
+bool XE::tglProgramComboSignal(void *port,uint32_t swing,uint32_t emphasis,void *overrideConfig,uint32_t &result,bool &native) {
 	auto self=callbackXE;
 	auto p=static_cast<uint8_t *>(port);
-	auto ctl=static_cast<uint8_t *>(self->tglObservationController);
-	if(!p || !ctl || overrideConfig || !self->tglActive || !self->tglComboSignalReady ||
+	native=false;
+	if(!p || overrideConfig || !self->tglActive || !self->tglComboSignalReady ||
 		(XELP::displayAdapter(self->xeProfile.family)!=XELP::DisplayAdapter::TGL && !self->adlsDisplaySelected) || !self->firmwarePorts.valid())return false;
 	auto config=*reinterpret_cast<uint32_t **>(p+0x548);
 	const auto &panel=self->firmwarePorts.panel;
@@ -18836,14 +18839,21 @@ bool XE::tglProgramComboSignal(void *port,uint32_t swing,uint32_t emphasis,void 
         !route.retainComboAUX() || p[0x117])return false;
     if(!adls && !fixed && (config[0]>1 || config[2]!=0 || config[3]!=0 ||
         !panel.valid || panel.ddi!=config[0] || (self->firmwarePorts.port[config[0]].flags&0x17)))return false;
+	const bool internal=!adls && !fixed;
+	if(internal && self->tglEDPSignalPolicy==TGLEDPSignalNative) {
+		native=true;return false;
+	}
+	auto ctl=static_cast<uint8_t *>(self->tglObservationController);
 	auto access=*reinterpret_cast<uint8_t **>(p+0x578);
-	if(!access || *reinterpret_cast<void **>(ctl+0xC40)!=access)return false;
+	if(!ctl || !access || *reinterpret_cast<void **>(ctl+0xC40)!=access)return false;
 	TGLComboSignal selected;
 	const auto lanes=*reinterpret_cast<uint32_t *>(p+0x124);
 	const auto rate=*reinterpret_cast<uint32_t *>(p+0x128);
+	const auto platform=internal && self->tglEDPSignalPolicy==TGLEDPSignalGeneric ?
+		XELP::ComboPolicy::Platform::TGL:XELP::ComboPolicy::tigerLake(self->xeProfile.identity);
 	if(!(adls ? selected.selectADLS(config[0],lanes,rate,swing,emphasis,route.panel,panel.lowSwing):
         selected.select(config[0],lanes,rate,panel.lowSwing,panel.hobl,swing,emphasis,
-            XELP::ComboPolicy::tigerLake(self->xeProfile.identity),!fixed)))return false;
+			platform,!fixed)))return false;
 	// The native fields identify this very bank. No guessed framebuffer index
 	// or cross-port reads; power must already belong to the training caller.
 	if(*reinterpret_cast<uint32_t *>(p+0x620)!=selected.base+0x804 ||
@@ -18859,7 +18869,8 @@ bool XE::tglProgramComboSignal(void *port,uint32_t swing,uint32_t emphasis,void 
 	const auto write=[&](uint32_t reg,uint32_t value){wrapTGLRegisterWrite(access,reg,value);};
 	const bool programmed=selected.program(read,write);
 	result=programmed ? 0 : kIOReturnNotReady;
-	const uint64_t detail[]={rate,lanes,selected.level,selected.low,selected.swing,selected.scalar,selected.post1};
+	const uint64_t detail[]={self->tglEDPSignalPolicy,static_cast<uint32_t>(selected.table),panel.lowSwing,panel.hobl,
+		rate,lanes,selected.level,selected.low,selected.swing,selected.scalar,selected.post1,programmed};
 	tglTransitionRecord(73,true,port,config[0],swing|(emphasis<<8),result,detail,sizeof(detail));
 	return true;
 }
@@ -18950,7 +18961,18 @@ void XE::wrapTGLFIALaneCount(void *port,uint32_t lanes) {
 // override, keeping the native lane mask, RMW, PMD hook and return value.
 uint32_t XE::wrapTGLSignalLevels(void *port, uint32_t swing, uint32_t emphasis, void *overrideConfig) {
 	uint32_t comboResult=0;
-	if(tglProgramComboSignal(port,swing,emphasis,overrideConfig,comboResult))return comboResult;
+	bool native=false;
+	if(tglProgramComboSignal(port,swing,emphasis,overrideConfig,comboResult,native))return comboResult;
+	if(native) {
+		auto bytes=static_cast<uint8_t *>(port);
+		auto config=*reinterpret_cast<uint32_t **>(bytes+0x548);
+		const auto rate=*reinterpret_cast<uint32_t *>(bytes+0x128),lanes=*reinterpret_cast<uint32_t *>(bytes+0x124);
+		const auto result=FunctionCast(wrapTGLSignalLevels,callbackXE->orgTGLSignalLevels)(port,swing,emphasis,overrideConfig);
+		const auto &panel=callbackXE->firmwarePorts.panel;
+		const uint64_t detail[]={TGLEDPSignalNative,0,panel.lowSwing,panel.hobl,rate,lanes,0,0,0,0,0,result==0};
+		tglTransitionRecord(73,true,port,config[0],swing|(emphasis<<8),result,detail,sizeof(detail));
+		return result;
+	}
 	auto bytes = static_cast<uint8_t *>(port);
 	auto config = bytes ? *reinterpret_cast<uint32_t **>(bytes + 0x548) : nullptr;
 	const auto rate = bytes ? *reinterpret_cast<uint32_t *>(bytes + 0x128) : 0;

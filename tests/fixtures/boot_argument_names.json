@@ -113,6 +113,8 @@
   "-wex-tgl-prog-off": [
     "-tglprogoff"
   ],
+  "-wex-tgl-edp-native-signal": [],
+  "-wex-tgl-edp-generic-signal": [],
   "-wex-no-host-rps": [
     "-tglnohostrps"
   ],

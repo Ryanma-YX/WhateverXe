@@ -57,4 +57,5 @@ void XE::xelpReadFirmware(IOPCIDevice *pci) {
     const auto &panel=firmwarePorts.panel;
     uint32_t panelFacts[]={panel.valid,panel.type,panel.ddi,panel.lowSwing,panel.hobl};
     pci->setProperty("WhateverXeFirmwarePanel",panelFacts,sizeof(panelFacts));
+    pci->setProperty("WhateverXeEDPSignalPolicy",tglEDPSignalPolicy,32);
 }

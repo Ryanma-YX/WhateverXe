@@ -479,7 +479,9 @@ private:
 	static uint32_t wrapTGLDisablePort(void *port);
 	mach_vm_address_t orgTGLSignalLevels {};
 	bool tglComboSignalReady {};
-	static bool tglProgramComboSignal(void *port,uint32_t swing,uint32_t emphasis,void *overrideConfig,uint32_t &result);
+	static constexpr uint32_t TGLEDPSignalAutomatic=0,TGLEDPSignalNative=1,TGLEDPSignalGeneric=2;
+	uint32_t tglEDPSignalPolicy {TGLEDPSignalAutomatic};
+	static bool tglProgramComboSignal(void *port,uint32_t swing,uint32_t emphasis,void *overrideConfig,uint32_t &result,bool &native);
 	static uint32_t wrapTGLSignalLevels(void *port, uint32_t swing, uint32_t emphasis, void *overrideConfig);
 	mach_vm_address_t orgTGLPhyClockGating {};
 	static void wrapTGLPhyClockGating(void *port, bool gate);
