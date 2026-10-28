@@ -16282,6 +16282,7 @@ uint32_t XE::wrapTGLEDID(void *port, uint32_t address, uint32_t offset, uint8_t 
 		if (result == 0 && data && offset == 0 && length >= 128) {
 			snprintf(key, sizeof(key), "TGLWEGPort%uEDIDBase", config[0]);
 			IORegistryEntry::getRegistryRoot()->setProperty(key, data, 128);
+			if(address==0x50)callbackXE->resolveTGLSignalPanel(port,data,length);
 		}
 	}
 	return result;
@@ -16720,6 +16721,7 @@ uint32_t XE::wrapTGLPortDDC(void *port, uint32_t block, uint8_t *data, bool forc
 	tglTrace(1, id, false, block, force, 0, 0);
 	const auto r = FunctionCast(wrapTGLPortDDC, callbackXE->orgTGLPortDDC)(port, block, data, force);
 	tglTrace(1, id, true, block, force, r, 0);
+	if(!r && data && block==1)callbackXE->resolveTGLSignalPanel(port,data,128);
 	cachePanelDepth(port,block,data,r);
 	if (r == 0 && data && (block == 1 || block == 2)) {
 		char key[40]; snprintf(key, sizeof(key), "TGLWEGPort%uDDC%s", id, block == 1 ? "Base" : "Extension");
@@ -18829,7 +18831,8 @@ bool XE::tglProgramComboSignal(void *port,uint32_t swing,uint32_t emphasis,void 
 	if(!p || overrideConfig || !self->tglActive || !self->tglComboSignalReady ||
 		(XELP::displayAdapter(self->xeProfile.family)!=XELP::DisplayAdapter::TGL && !self->adlsDisplaySelected) || !self->firmwarePorts.valid())return false;
 	auto config=*reinterpret_cast<uint32_t **>(p+0x548);
-	const auto &panel=self->firmwarePorts.panel;
+	const auto resolved=__atomic_load_n(&self->tglSignalPanel,__ATOMIC_ACQUIRE);
+	const auto &panel=resolved?*resolved:self->firmwarePorts.panel;
 	const bool adls=self->adlsDisplaySelected && self->adlsWiring.boundSST(self->tglPlatformCopy,config);
  const bool fixed=!self->adlsDisplaySelected && TGLComboDP::bound(self->tglComboDPMask,self->tglPlatformCopy,config);
  if(self->adlsDisplaySelected && !adls)return false;
@@ -18869,9 +18872,10 @@ bool XE::tglProgramComboSignal(void *port,uint32_t swing,uint32_t emphasis,void 
 	const auto write=[&](uint32_t reg,uint32_t value){wrapTGLRegisterWrite(access,reg,value);};
 	const bool programmed=selected.program(read,write);
 	result=programmed ? 0 : kIOReturnNotReady;
-	const uint64_t detail[]={self->tglEDPSignalPolicy,static_cast<uint32_t>(selected.table),panel.lowSwing,panel.hobl,
+	const uint32_t detail[]={self->tglEDPSignalPolicy,static_cast<uint32_t>(selected.table),panel.lowSwing,panel.hobl,
 		rate,lanes,selected.level,selected.low,selected.swing,selected.scalar,selected.post1,programmed};
-	tglTransitionRecord(73,true,port,config[0],swing|(emphasis<<8),result,detail,sizeof(detail));
+	static_assert(sizeof(detail)<=56,"Signal trace must fit the lifecycle payload");
+	tglTransitionRecord(88,true,port,config[0],swing|(emphasis<<8),result,detail,sizeof(detail));
 	return true;
 }
 
@@ -18968,9 +18972,18 @@ uint32_t XE::wrapTGLSignalLevels(void *port, uint32_t swing, uint32_t emphasis, 
 		auto config=*reinterpret_cast<uint32_t **>(bytes+0x548);
 		const auto rate=*reinterpret_cast<uint32_t *>(bytes+0x128),lanes=*reinterpret_cast<uint32_t *>(bytes+0x124);
 		const auto result=FunctionCast(wrapTGLSignalLevels,callbackXE->orgTGLSignalLevels)(port,swing,emphasis,overrideConfig);
-		const auto &panel=callbackXE->firmwarePorts.panel;
-		const uint64_t detail[]={TGLEDPSignalNative,0,panel.lowSwing,panel.hobl,rate,lanes,0,0,0,0,0,result==0};
-		tglTransitionRecord(73,true,port,config[0],swing|(emphasis<<8),result,detail,sizeof(detail));
+		const auto resolved=__atomic_load_n(&callbackXE->tglSignalPanel,__ATOMIC_ACQUIRE);
+		const auto &panel=resolved?*resolved:callbackXE->firmwarePorts.panel;
+		const uint32_t detail[]={TGLEDPSignalNative,0,panel.lowSwing,panel.hobl,rate,lanes,0,0,0,0,0,result==0};
+		static_assert(sizeof(detail)<=56,"Signal trace must fit the lifecycle payload");
+		tglTransitionRecord(88,true,port,config[0],swing|(emphasis<<8),result,detail,sizeof(detail));
+		if(tglDisplayTraceEnabled) {
+			uint64_t ticks,ns;clock_get_uptime(&ticks);absolutetime_to_nanoseconds(ticks,&ns);
+			static uint32_t sequence {};
+			uint32_t applied[]={1,TGLEDPSignalNative,config[0],rate,lanes,result,
+				__sync_add_and_fetch(&sequence,1),static_cast<uint32_t>(ns),static_cast<uint32_t>(ns>>32)};
+			IORegistryEntry::getRegistryRoot()->setProperty("WhateverXeEDPSignalApplied",applied,sizeof(applied));
+		}
 		return result;
 	}
 	auto bytes = static_cast<uint8_t *>(port);

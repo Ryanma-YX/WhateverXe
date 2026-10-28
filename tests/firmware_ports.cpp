@@ -19,12 +19,19 @@ std::vector<uint8_t> table(const std::vector<Port>&ports){
  checksum(b);return b;
 }
 int main(int argc,char **argv){
- if(argc==3){std::ifstream f(argv[2],std::ios::binary);assert(f);std::vector<uint8_t>b{std::istreambuf_iterator<char>(f),{}};
+ if(argc==3||argc==4){std::ifstream f(argv[2],std::ios::binary);assert(f);std::vector<uint8_t>b{std::istreambuf_iterator<char>(f),{}};
   const auto family=!strcmp(argv[1],"adls")?Family::AlderLakeS:!strcmp(argv[1],"12")?Family::TigerLake:Family::AlderLakeN;
-  auto r=parse(b.data(),b.size(),family);auto w=r.hdmi(3);
+  PanelCatalog catalog;auto r=parse(b.data(),b.size(),family,argc==4?&catalog:nullptr);auto w=r.hdmi(3);
   printf("status=%u bdb=%u present=%x unmapped=%u ambiguous=%x hdmi=%x pins=%u,%u,%u valid=%u\n",unsigned(r.status),r.version,r.present,r.unmapped,r.ambiguous,w.hdmi,w.ddc[0],w.ddc[1],w.ddc[2],w.valid);
   for(unsigned d=0;d<9;++d)if(r.present&(1U<<d)){auto q=r.port[d];printf("ddi=%u type=%x dvo=%u ddc=%u aux=%x flags=%x caps=%x\n",d,q.type,q.dvo,q.ddc,q.aux,q.flags,q.capabilities);}
   printf("panel valid=%u type=%u ddi=%u low=%u hobl=%u\n",r.panel.valid,r.panel.type,r.panel.ddi,r.panel.lowSwing,r.panel.hobl);
+  if(argc==4) {
+   std::ifstream f(argv[3],std::ios::binary);assert(f);std::vector<uint8_t>edid{std::istreambuf_iterator<char>(f),{}};
+   PanelMatch status;const auto panel=catalog.match(edid.data(),edid.size(),status);
+   printf("catalog requested=%u ready=%u match=%u\n",catalog.requested,catalog.ready,unsigned(status));
+   if(!panel)return 2;
+   printf("resolved panel valid=%u type=%u ddi=%u low=%u hobl=%u\n",panel->valid,panel->type,panel->ddi,panel->lowSwing,panel->hobl);
+  }
   return !r.valid();
  }
  // DP-alt firmware admission is independent of fixed-DP policy and mode.
@@ -187,5 +194,68 @@ int main(int argc,char **argv){
   auto q=parse(b.data(),b.size(),Family::TigerLake);
   assert(q.panel.valid && !q.panel.backlightValid);
  }
- puts("PASS firmware bounds, checksum diagnostics, connector maps, optional panel facts and OpRegion addresses");
+ // 0xff selects a panel by live EDID identity, never by panel zero or a byte
+ // search. Modern implicit LFP entries also require every timing terminator.
+ auto dynamic=panelTable;dynamic[options]=255;
+ auto lfp=append(dynamic,42,16*66);
+ for(unsigned i=0;i<16;++i) {
+  auto at=lfp+66*i;w16(dynamic,at+36,0xffff);
+  auto id=at+56;dynamic[id]=0x12;dynamic[id+1]=uint8_t(i+1);
+  dynamic[id+2]=0x34;dynamic[id+3]=0x56;dynamic[id+8]=10;dynamic[id+9]=30;
+ }
+ auto edidFor=[&](unsigned i) {
+  std::vector<uint8_t> e(128);const uint8_t sig[]={0,255,255,255,255,255,255,0};
+  memcpy(e.data(),sig,8);memcpy(e.data()+8,dynamic.data()+lfp+66*i+56,10);
+  uint8_t sum=0;for(auto v:e)sum+=v;e[127]-=sum;return e;
+ };
+ PanelCatalog catalog;auto dynamicPorts=parse(dynamic.data(),dynamic.size(),Family::TigerLake,&catalog);
+ assert(dynamicPorts.valid()&&!dynamicPorts.panel.valid&&catalog.ready&&catalog.requested==255);
+ for(unsigned i=0;i<16;++i) {
+  auto e=edidFor(i);PanelMatch status;auto p=catalog.match(e.data(),e.size(),status);
+  assert(p&&p->valid&&p->type==i&&p->ddi==0&&status==PanelMatch::Exact);
+  for(unsigned j=0;j<5;++j)assert(p->delays[j]==100*i+j+1);
+ }
+ auto e=edidFor(3);PanelMatch match;
+ assert(!catalog.match(nullptr,128,match)&&match==PanelMatch::InvalidEDID);
+ for(size_t n=0;n<128;++n)assert(!catalog.match(e.data(),n,match));
+ auto invalid=e;invalid[127]^=1;assert(!catalog.match(invalid.data(),128,match));
+ auto missing=e;missing[8]^=0x40;missing[127]=0;
+ {uint8_t sum=0;for(auto v:missing)sum+=v;missing[127]-=sum;}
+ assert(!catalog.match(missing.data(),128,match)&&match==PanelMatch::NoMatch);
+ auto wildcard=catalog;wildcard.id[3][8]=wildcard.id[3][9]=0;
+ assert(wildcard.match(e.data(),128,match)->type==3&&match==PanelMatch::NoDate);
+ auto duplicate=catalog;memcpy(duplicate.id[4],duplicate.id[3],10);
+ assert(!duplicate.match(e.data(),128,match)&&match==PanelMatch::Ambiguous);
+ duplicate=wildcard;memcpy(duplicate.id[4],duplicate.id[3],10);
+ assert(!duplicate.match(e.data(),128,match)&&match==PanelMatch::Ambiguous);
+ // An exact dated entry wins over any date-free alternatives.
+ duplicate=catalog;memcpy(duplicate.id[4],wildcard.id[3],10);memcpy(duplicate.id[5],wildcard.id[3],10);
+ assert(duplicate.match(e.data(),128,match)->type==3&&match==PanelMatch::Exact);
+ // Explicit BDB 41 offsets are BDB-relative; malformed pointers never fall
+ // back to the implicit layout. Bounds are independent of EDID matching.
+ auto withPtrs=dynamic;auto ptrs=append(withPtrs,41,145);withPtrs[ptrs]=3;
+ for(unsigned i=0;i<16;++i) {
+  auto at=ptrs+1+9*i;auto base=lfp-48+66*i;
+  w16(withPtrs,at,base);withPtrs[at+2]=38;
+  w16(withPtrs,at+3,base+38);withPtrs[at+5]=18;
+  w16(withPtrs,at+6,base+56);withPtrs[at+8]=10;
+ }
+ (void)parse(withPtrs.data(),withPtrs.size(),Family::TigerLake,&catalog);assert(catalog.ready);
+ for(unsigned bad=0;bad<7;++bad) {
+  auto b=withPtrs;
+  if(bad==0)w16(b,ptrs+7,0xffff);
+  if(bad==1)b[ptrs]=2;
+  if(bad==2)b[ptrs+9]=9;
+  if(bad==3)w16(b,ptrs+10,lfp-48);
+  if(bad==4)b[lfp+36]=0;
+  if(bad==5)append(b,42,16*66);
+  if(bad==6)w16(b,lfp-2,16*66-1);
+  auto p=parse(b.data(),b.size(),Family::TigerLake,&catalog);
+  assert(p.valid()&&!p.panel.valid&&!catalog.ready);
+ }
+ for(size_t n=lfp;n<dynamic.size();++n) {
+  auto b=dynamic;b.resize(n);w16(b,24,b.size());w16(b,68,b.size()-48);
+  auto p=parse(b.data(),b.size(),Family::TigerLake,&catalog);assert(p.valid()&&!p.panel.valid&&!catalog.ready);
+ }
+ puts("PASS firmware bounds, connector maps, panel facts, unique live-EDID selection and OpRegion addresses");
 }

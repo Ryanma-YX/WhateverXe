@@ -25,6 +25,7 @@ struct State {
  uint32_t tglEDPSignalPolicy=0;
  struct {uint32_t identity=0x9A498086;XELP::Family family=XELP::Family::TigerLake;} xeProfile;
  XELP::VBT::Ports firmwarePorts;
+ const XELP::VBT::Ports::Panel *tglSignalPanel=nullptr;
 } state,*callbackXE=&state;
 constexpr uint32_t TGLEDPSignalNative=1,TGLEDPSignalGeneric=2;
 constexpr uint32_t kIOReturnNotReady=0xe00002d8;
@@ -36,7 +37,7 @@ void wrapTGLRegisterWrite(void *,unsigned long reg,uint32_t value){++writes;
  if(reg==0x162694)for(unsigned n=0;n<4;++n)registers[0x162894+0x100*n]=value;
  registers[reg]=value;
 }
-void tglTransitionRecord(unsigned stage,bool,void *,unsigned,unsigned,unsigned,const void *,unsigned){assert(stage==73);++records;}
+void tglTransitionRecord(unsigned stage,bool,void *,unsigned,unsigned,unsigned,const void *,unsigned size){assert(stage==88&&size==48&&size<=56);++records;}
 FUNCTION
 int main(){
  for(unsigned bad=0;bad<23;++bad){
@@ -107,6 +108,14 @@ int main(){
   registers.clear();reads=writes=records=0;uint32_t result=99;bool native=false;
   assert(!run(p,0,1,nullptr,result,native)&&native&&!reads&&!writes&&!records);
   config[2]=1;native=false;assert(!run(p,0,1,nullptr,result,native)&&!native);
+  // EDID resolution supplies immutable signal facts without changing the
+  // original firmware snapshot or relaxing any controller/port guard.
+  config[2]=0;auto resolved=state.firmwarePorts.panel;resolved.type=3;
+  state.firmwarePorts.panel.valid=false;state.tglSignalPanel=&resolved;
+  native=false;assert(!run(p,0,1,nullptr,result,native)&&native&&!reads&&!writes);
+  resolved.ddi=1;native=false;assert(!run(p,0,1,nullptr,result,native)&&!native);
+  resolved.ddi=0;state.tglEDPSignalPolicy=TGLEDPSignalGeneric;
+  native=false;assert(!run(p,0,1,nullptr,result,native)&&!native&&!reads&&!writes);
  }
 
  // External TGL Combo uses DP electrical values even if a different panel

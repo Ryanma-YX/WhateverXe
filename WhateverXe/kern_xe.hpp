@@ -121,7 +121,12 @@ private:
     XELP::SmallGTResources display12SmallGT;
     XELP::Profile xeProfile;
     XELP::VBT::Ports firmwarePorts;
+    XELP::VBT::PanelCatalog tglSignalPanels;
+    // Published once from a validated native EDID read. The catalogue and
+    // pointed-to facts remain immutable for the driver's lifetime.
+    const XELP::VBT::Ports::Panel *tglSignalPanel {};
     void xelpReadFirmware(IOPCIDevice *pci);
+    void resolveTGLSignalPanel(void *port,const uint8_t *edid,uint32_t length);
     void xelpLoadDisplayPool(IOService *provider);
     bool xelpInstallHostRPS(KernelPatcher &,size_t,mach_vm_address_t,size_t);
     uint32_t adlnNativeSubslices {}, adlnL3Banks {}, adlnNativeEUs {};

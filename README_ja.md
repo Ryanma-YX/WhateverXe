@@ -147,6 +147,8 @@ Alder Lake-N / Twin LakeとAlder Lake-H/P/U / Raptor Lake-H/P/UではGPU資源�
 
 Tiger Lakeの内蔵パネルでLink Trainingや復帰を診断する場合、`-wex-tgl-edp-native-signal`は内蔵eDPの信号レベル設定だけをAppleドライバに委譲します。`-wex-tgl-edp-generic-signal`はWEXによる設定を維持し、U/Y用ではなくTiger Lake汎用の係数テーブルを選択します。外部DisplayPort、Alder Lake-S、Display 13の出力には影響しません。両方を指定した場合はnative経路が優先されます。
 iGPUの`WhateverXeEDPSignalPolicy`プロパティには、選択中の経路が`0`（自動）、`1`（native）、`2`（generic）として表示されます。
+選択値だけでは、その経路が実際に実行されたことを示しません。VBTがEDIDによるパネル選択を指定する場合、これらの診断ポリシーには、有効な内蔵パネルの実読み取りEDIDと一意に一致するパネル識別情報が必要です。一致がない場合や曖昧な場合は既存の経路を維持し、OpRegionに保存されたEDIDやパネル0で代用しません。
+`-wex-display-trace`を指定すると、`WhateverXeEDPSignalApplied`がnative信号コールバックの実行と戻り値を記録します。復帰成功を保証するものではありません。
 
 開発時の一時診断用に `-wex-adlp-readout` を指定すると、GPUドライバの受付を閉じたままADL-Pの起動資源を採取します。対応済みハードウェアでは不要です。
 `-wex-adlp-load-only` は選択済みADL-P/RPL-Pで、FramebufferとAccelerator両方のnative probe/startを止め、GPUを初期化せずにロード段階を診断します。

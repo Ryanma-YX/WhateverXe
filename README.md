@@ -204,6 +204,12 @@ U/Y table. External DisplayPort, Alder Lake-S and Display 13 outputs are not
 affected. If both arguments are present, the native path takes precedence.
 The iGPU property `WhateverXeEDPSignalPolicy` reports the selected path as
 `0` (automatic), `1` (native), or `2` (generic).
+Selection alone does not establish that the path ran. If VBT defers panel
+selection to EDID, these diagnostic policies require a unique panel identity
+match from a valid live internal-panel EDID; missing or ambiguous matches keep
+the existing path. They do not substitute a cached OpRegion EDID or panel zero.
+With `-wex-display-trace`, `WhateverXeEDPSignalApplied` records an actual native
+signal callback, including its result; it does not prove successful wake.
 
 Temporary development diagnostic: `-wex-adlp-readout` captures ADL-P boot resources while keeping GPU driver admission disabled. It is not required for supported hardware.
 `-wex-adlp-load-only` blocks both native framebuffer and accelerator probes/starts on a selected ADL-P/RPL-P device, for load-only diagnostics without GPU initialization.

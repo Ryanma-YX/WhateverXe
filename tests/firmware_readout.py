@@ -3,7 +3,7 @@
 from pathlib import Path
 import subprocess,tempfile
 r=Path(__file__).resolve().parents[1]
-s=(r/'WhateverXe/kern_firmware.cpp').read_text();body=s[s.index('static void publishBytes'):]
+s=(r/'WhateverXe/kern_firmware.cpp').read_text();body=s[s.index('static void publishBytes'):s.index('// No new AUX/MMIO')]
 code=r'''
 #include <cassert>
 #include <cstdio>
@@ -18,9 +18,9 @@ struct IOMemoryDescriptor {
  Map *map(unsigned){return nullptr;}void release(){}
 };
 struct IOPCIDevice {unsigned reads=0,publications=0;uint32_t signalPolicy=~0U;uint32_t configRead32(unsigned off){assert(off==0xfc);++reads;return 0;}
- void setProperty(const char*key,uint32_t value,unsigned){++publications;if(!strcmp(key,"WhateverXeEDPSignalPolicy"))signalPolicy=value;}void setProperty(const char*,const void*,unsigned){++publications;}void setProperty(const char*,OSData*){++publications;}
+ void setProperty(const char*key,uint32_t value,unsigned){++publications;if(!strcmp(key,"WhateverXeEDPSignalPolicy"))signalPolicy=value;}void setProperty(const char*,void*,unsigned){++publications;}void setProperty(const char*,OSData*){++publications;}
 };
-struct XE {XELP::Profile xeProfile;XELP::VBT::Ports firmwarePorts;uint32_t tglEDPSignalPolicy=0;void xelpReadFirmware(IOPCIDevice*);};
+struct XE {XELP::Profile xeProfile;XELP::VBT::Ports firmwarePorts;XELP::VBT::PanelCatalog tglSignalPanels;uint32_t tglEDPSignalPolicy=0;void xelpReadFirmware(IOPCIDevice*);};
 BODY
 int main(){
  for(unsigned kind=0;kind<5;++kind){XE x;IOPCIDevice pci;

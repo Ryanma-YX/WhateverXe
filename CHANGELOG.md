@@ -10,6 +10,7 @@ Use the latest [WhateverXe Graphics](https://github.com/b00t0x/WhateverXe-Graphi
 
 ### Fixed
 
+- Resolve EDID-selected Tiger Lake panels for the optional signal policies from a unique live panel identity, and retain bounded evidence of native signal callbacks on the supported macOS versions. Unresolved panels retain the existing path; system sleep still needs hardware validation.
 - Fix DEBUG boot freezes and restart loops caused by excessive kernel stack usage.
 
 ## 0.6.0

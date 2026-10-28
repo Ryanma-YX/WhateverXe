@@ -74,6 +74,16 @@ int main(){
  tglTransitionRecord(1,false,inaccessible,2,3,4,inaccessible,57);
  tglTransitionRecord(1,false,inaccessible,2,3,4,nullptr,1);
  assert(tglTransitionCount==1);
+ // The signal path's complete compact record must survive the real
+ // recorder, rather than only a permissive signal-test stub.
+ const uint32_t signal[]={1,0,0,0,20,4,0,0,0,0,0,1};
+ static_assert(sizeof(signal)==48,"compact signal trace");
+ tglTransitionRecord(88,true,inaccessible,0,0,0,signal,sizeof(signal));
+ assert(tglTransitionCount==2);
+ assert(tglTransitionSerialize(nullptr,nullptr,&snapshot));
+ TGLTransitionRecord signalRecord;memcpy(&signalRecord,snapshot.data.data()+16+128,128);
+ assert(signalRecord.q[3]==88&&signalRecord.q[4]==1&&!memcmp(signalRecord.q+9,signal,sizeof(signal)));
+ assert(signalRecord.q[15]==0);
  for(bool prior:{false,true}){
   irqEnabled=prior;tglTransitionRecord(1,true,inaccessible,0,0,0);
   assert(irqEnabled==prior&&!held);
@@ -90,7 +100,7 @@ int main(){
  write(2048);assert(tglTransitionSerialize(nullptr,nullptr,&snapshot));validate(snapshot);
  std::thread a([&]{write(4000);}),b([&]{write(4000);});
  for(unsigned i=0;i<100;++i){assert(tglTransitionSerialize(nullptr,nullptr,&snapshot));validate(snapshot);}
- a.join();b.join();assert(tglTransitionCount==10051);
+ a.join();b.join();assert(tglTransitionCount==10052);
  assert(tglTransitionSerialize(nullptr,nullptr,&snapshot));validate(snapshot);
  assert(tglTransitionSerialize(nullptr,reinterpret_cast<void*>(1),&snapshot));
  assert(snapshot.data.size()==16+4096*128);
@@ -109,7 +119,7 @@ int main(){
  IOFree(tglTransitions,tglTransitionSlots*sizeof(TGLTransitionRecord));
  IOFree(tglTransitionFirst,tglTransitionFirstSlots*sizeof(TGLTransitionRecord));
  IOSimpleLockFree(tglTransitionLock);
- puts("PASS: 10051 events, concurrent coherent snapshots, ring wrap, allocation failure, IRQ restore, no object/MMIO access");
+ puts("PASS: 10052 events, compact signal payload, concurrent coherent snapshots, ring wrap, allocation failure, IRQ restore, no object/MMIO access");
 }
 '''.replace('// BODY', body)
 with tempfile.TemporaryDirectory(prefix='tgl-transition-') as tmp:

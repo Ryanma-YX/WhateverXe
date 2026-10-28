@@ -86,12 +86,41 @@ struct Ports {
         return w;
     }
 };
+// Optional immutable catalogue for VBT's 0xff (EDID-selected) panel type.
+// Populate during firmware acquisition; resolve only against a successful live
+// base EDID from the qualified internal port, never a guessed panel index.
+enum class PanelMatch : uint32_t { Unavailable, WaitingEDID, InvalidEDID, NoMatch, Ambiguous, Exact, NoDate };
+struct PanelCatalog {
+    uint32_t requested {UINT32_MAX};
+    bool ready {};
+    uint8_t id[16][10] {};
+    Ports::Panel panel[16];
+    const Ports::Panel *match(const uint8_t *edid,size_t length,PanelMatch &status) const {
+        status=PanelMatch::Unavailable;if(!ready)return nullptr;
+        static const uint8_t signature[]={0,255,255,255,255,255,255,0};
+        status=PanelMatch::InvalidEDID;
+        if(!edid || length<128 || memcmp(edid,signature,8))return nullptr;
+        uint8_t sum=0;for(unsigned i=0;i<128;++i)sum+=edid[i];
+        if(sum || !u16(edid+8) || u16(edid+8)==0xffff)return nullptr;
+        unsigned exact=16,nodate=16,exactCount=0,nodateCount=0;
+        for(unsigned i=0;i<16;++i) {
+            if(!memcmp(id[i],edid+8,10)){exact=i;++exactCount;}
+            else if(!id[i][8] && !id[i][9] && !memcmp(id[i],edid+8,8)){nodate=i;++nodateCount;}
+        }
+        if(exactCount==1){status=PanelMatch::Exact;return &panel[exact];}
+        if(exactCount>1 || nodateCount>1){status=PanelMatch::Ambiguous;return nullptr;}
+        if(nodateCount==1){status=PanelMatch::NoDate;return &panel[nodate];}
+        status=PanelMatch::NoMatch;return nullptr;
+    }
+};
 // Optional panel facts must never weaken General Definitions admission or
 // make an unrelated malformed firmware tail reject usable connector facts.
-inline void panelFacts(const uint8_t *b,size_t header,size_t size,Ports &ports) {
+inline void panelFacts(const uint8_t *b,size_t header,size_t size,Ports &ports,PanelCatalog *catalog=nullptr) {
     const uint8_t *options=nullptr,*edp=nullptr,*power=nullptr,*backlight=nullptr;
+    const uint8_t *pointers=nullptr,*lfp=nullptr;
     size_t optionsSize=0,edpSize=0,powerSize=0,backlightSize=0;
-    bool duplicate=false,backlightDuplicate=false;
+    size_t pointersSize=0,lfpSize=0;
+    bool duplicate=false,backlightDuplicate=false,lfpDuplicate=false;
     for(size_t at=header;at<size;) {
         if(size-at<3)break;
         size_t n=u16(b+at+1);
@@ -105,9 +134,12 @@ inline void panelFacts(const uint8_t *b,size_t header,size_t size,Ports &ports) 
         if(b[at]==27){duplicate|=edp!=nullptr;edp=block;edpSize=n;}
         if(b[at]==43){backlightDuplicate|=backlight!=nullptr;backlight=block;backlightSize=n;}
         if(b[at]==44){duplicate|=power!=nullptr;power=block;powerSize=n;}
+        if(b[at]==41){lfpDuplicate|=pointers!=nullptr;pointers=block;pointersSize=n;}
+        if(b[at]==42){lfpDuplicate|=lfp!=nullptr;lfp=block;lfpSize=n;}
         at+=3+n;
     }
-    if(duplicate || !options || optionsSize<1 || options[0]>=16 ||
+    if(catalog && options && optionsSize)catalog->requested=options[0];
+    if(duplicate || !options || optionsSize<1 || (options[0]>=16 && options[0]!=255) ||
        !edp || edpSize<212 || (ports.version>=232 && (!power || powerSize<56)))return;
     unsigned internal=PortCount;
     for(unsigned d=0;d<PortCount;++d)if((ports.present&(1U<<d)) &&
@@ -116,8 +148,8 @@ inline void panelFacts(const uint8_t *b,size_t header,size_t size,Ports &ports) 
         internal=d;
     }
     if(internal==PortCount)return;
-    auto &p=ports.panel;
-    p.type=options[0];p.ddi=internal;
+    auto fill=[&](Ports::Panel &p,unsigned type) {
+    p.type=type;p.ddi=internal;
     p.lowSwing=((u64(edp+204)>>(4*p.type))&15)==0;
     p.hobl=ports.version>=232 && (u16(power+54)&(1U<<p.type));
     p.valid=true;
@@ -130,6 +162,38 @@ inline void panelFacts(const uint8_t *b,size_t header,size_t size,Ports &ports) 
         p.controller=backlight[113+p.type]>>4;
         p.backlightValid=true;
     }
+    };
+    if(options[0]<16){fill(ports.panel,options[0]);return;}
+    if(!catalog || lfpDuplicate || !lfp)return;
+    // BDB 41 offsets are relative to the BDB, not the VBT or block payload.
+    // Without BDB 41, reviewed modern VBTs use 38+18+10-byte LFP entries
+    // (Linux v6.12 intel_bios.c generate_lfp_data_ptrs). Never scan arbitrary
+    // bytes for an ID; require all 16 bounded, terminated entries first.
+    size_t stride=66,pnpOffset=56;
+    if(pointers) {
+        if(pointersSize<145 || pointers[0]!=3)return;
+        const size_t first=u16(pointers+1),second=u16(pointers+10);
+        if(first!=size_t(lfp-b) || second<=first)return;
+        stride=second-first;
+        const size_t fp=pointers[3],dvo=u16(pointers+4);
+        if(fp<32 || dvo<first || (dvo-first!=fp && dvo-first!=fp+6) ||
+           pointers[6]!=18 || pointers[9]!=10 || u16(pointers+7)!=dvo+18 ||
+           dvo+18+10!=first+stride)return;
+        pnpOffset=stride-10;
+        for(unsigned i=0;i<16;++i) {
+            const auto entry=pointers+1+9*i;
+            if(u16(entry)!=first+i*stride || entry[2]!=fp ||
+               u16(entry+3)!=dvo+i*stride || entry[5]!=18 ||
+               u16(entry+6)!=first+i*stride+pnpOffset || entry[8]!=10)return;
+        }
+    }
+    if(stride<60 || stride>lfpSize/16 || pnpOffset<20)return;
+    for(unsigned i=0;i<16;++i)if(u16(lfp+i*stride+pnpOffset-20)!=0xffff)return;
+    for(unsigned i=0;i<16;++i) {
+        memcpy(catalog->id[i],lfp+i*stride+pnpOffset,10);
+        fill(catalog->panel[i],i);
+    }
+    catalog->ready=true;
 }
 // Return the donor's physical-DDI slot, never an FB index. Display13 VBT
 // retains C/D/E labels even on ADL-N, whose physical Combo set is only A/B.
@@ -144,7 +208,8 @@ inline uint32_t ddi(Family family,uint32_t dvo) {
     }
     return PortCount;
 }
-inline Ports parse(const void *data,size_t length,Family family) {
+inline Ports parse(const void *data,size_t length,Family family,PanelCatalog *catalog=nullptr) {
+    if(catalog)*catalog={};
     Ports r;
     if(!data || !length)return r;
     if(displayAdapter(family)==DisplayAdapter::Unknown){r.status=Status::Platform;return r;}
@@ -192,7 +257,7 @@ inline Ports parse(const void *data,size_t length,Family family) {
         r.present|=1U<<d;
         if(!q.fixedTMDS())r.ambiguous|=1U<<d;
     }
-    r.status=Status::Valid;panelFacts(b,bh,bs,r);return r;
+    r.status=Status::Valid;panelFacts(b,bh,bs,r,catalog);return r;
 }
 // OpRegion acquisition descriptor, kept pure for malformed/overflow testing.
 struct Region {uint64_t address {};uint32_t bytes {},inlineBytes {};bool valid {};};
