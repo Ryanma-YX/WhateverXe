@@ -23,6 +23,8 @@ struct XE {
  bool adlpDisplaySelected=false,adlpRenderRequested=false,display13FramebufferRequested=false;
  bool tglRequested=false,tglAcceleratorRequested=false,tglInactivePorts=false,tglPG1Poll=false;
  bool tglClockOrderRequested=false,tglTrainingLeaseRequested=false,tglProgramEnabled=false;
+ static constexpr uint32_t TGLEDPSignalAutomatic=0,TGLEDPSignalNative=1,TGLEDPSignalGeneric=2;
+ uint32_t tglEDPSignalPolicy=TGLEDPSignalAutomatic;
  int *currentFramebuffer=nullptr,*currentGraphics=nullptr;
  struct {bool available=false;}modDVMTCalcFix;
  void selectProfile(const XELP::Profile &);
@@ -41,6 +43,7 @@ int main(){
   assert(x.display13FramebufferRequested==(isMobile || isN));
   assert(x.adlpDisplaySelected==isMobile);
   assert(x.adlpRenderRequested==(isMobile&&!off));
+  assert(x.tglEDPSignalPolicy==XE::TGLEDPSignalAutomatic);
   assert(x.adlnDetected==(isN || (isMobile&&!off)));
   assert(x.tglAcceleratorRequested==!off);
   assert(adlnNativeRCSProfileRequested==(isN || (isMobile&&!off)));++cases;

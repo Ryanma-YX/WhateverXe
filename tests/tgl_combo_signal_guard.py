@@ -102,7 +102,7 @@ int main(){
   alignas(8) uint8_t p[0x700]{};uint32_t config[8]{};
   auto store=[](void *b,unsigned o,auto v){memcpy(static_cast<uint8_t *>(b)+o,&v,sizeof(v));};
   state={};state.tglEDPSignalPolicy=TGLEDPSignalNative;
-  state.firmwarePorts.status=XELP::VBT::Status::Valid;state.firmwarePorts.panel.valid=true;
+  state.firmwarePorts.status=XELP::VBT::Status::Valid;state.firmwarePorts.panel.valid=true;state.firmwarePorts.panel.ddi=0;
   store(p,0x548,config+0);store(p,0x550,1U);store(p,0x124,4U);store(p,0x128,20U);
   registers.clear();reads=writes=records=0;uint32_t result=99;bool native=false;
   assert(!run(p,0,1,nullptr,result,native)&&native&&!reads&&!writes&&!records);
